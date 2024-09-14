@@ -34,25 +34,6 @@ def convert_video_to_audio(input_file, output_file, output_format, progress_call
     if process.returncode != 0:
         raise Exception("Conversion failed. Check if the input file is valid.")
 
-def cut_video(input_file, output_file, start_time, end_time):
-    if not check_ffmpeg():
-        raise Exception("FFmpeg is not installed. Please install it using 'sudo apt-get install ffmpeg'.")
-
-    command = [
-        "ffmpeg",
-        "-i", input_file,
-        "-ss", str(start_time),
-        "-to", str(end_time),
-        "-c", "copy",
-        "-y",  # Overwrite output file if it exists
-        output_file
-    ]
-
-    process = subprocess.run(command, stderr=subprocess.PIPE, universal_newlines=True)
-
-    if process.returncode != 0:
-        raise Exception("Video cutting failed. Check if the input file is valid and the time range is correct.")
-
 def get_video_duration(input_file):
     command = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", input_file]
     result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
