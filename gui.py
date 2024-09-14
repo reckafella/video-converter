@@ -1,40 +1,13 @@
 import os
-import cv2
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                              QPushButton, QLabel, QLineEdit, QComboBox, 
                              QFileDialog, QProgressBar, QMessageBox, QSlider,
                              QSpinBox)
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
-from PyQt5.QtGui import QImage, QPixmap
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer, QUrl
+from PyQt5.QtGui import QPixmap
 from PyQt5.QtMultimedia import QMediaPlayer, QMediaContent
 from PyQt5.QtMultimediaWidgets import QVideoWidget
-from PyQt5.QtCore import QUrl
-from conversion import convert_video_to_audio, cut_video
-
-class VideoThread(QThread):
-    change_pixmap_signal = pyqtSignal(QImage)
-
-    def __init__(self, filename):
-        super().__init__()
-        self.filename = filename
-        self._run_flag = True
-
-    def run(self):
-        cap = cv2.VideoCapture(self.filename)
-        while self._run_flag:
-            ret, cv_img = cap.read()
-            if ret:
-                rgb_image = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
-                h, w, ch = rgb_image.shape
-                bytes_per_line = ch * w
-                convert_to_Qt_format = QImage(rgb_image.data, w, h, bytes_per_line, QImage.Format_RGB888)
-                p = convert_to_Qt_format.scaled(640, 480, Qt.KeepAspectRatio)
-                self.change_pixmap_signal.emit(p)
-        cap.release()
-
-    def stop(self):
-        self._run_flag = False
-        self.wait()
+from conversion import convert_video_to_audio, cut_video, get_video_duration
 
 class ConversionThread(QThread):
     progress = pyqtSignal(int)
@@ -91,8 +64,11 @@ class MainWindow(QMainWindow):
         layout.addLayout(input_layout)
 
         # Video player
-        self.video_label = QLabel()
-        layout.addWidget(self.video_label)
+        self.video_widget = QVideoWidget()
+        layout.addWidget(self.video_widget)
+
+        self.media_player = QMediaPlayer(None, QMediaPlayer.VideoSurface)
+        self.media_player.setVideoOutput(self.video_widget)
 
         # Video controls
         controls_layout = QHBoxLayout()
@@ -153,11 +129,9 @@ class MainWindow(QMainWindow):
 
         self.format_combo.currentTextChanged.connect(self.update_output_filename)
 
-        # Video playback
-        self.video_thread = None
-        self.timer = QTimer(self)
-        self.timer.setInterval(30)
-        self.timer.timeout.connect(self.update_video_frame)
+        # Connect media player signals
+        self.media_player.durationChanged.connect(self.update_duration)
+        self.media_player.positionChanged.connect(self.update_position)
 
     def browse_input_file(self):
         file_name, _ = QFileDialog.getOpenFileName(self, "Select Video File", "", "Video Files (*.mp4 *.avi *.mkv *.flv *.mov);;All Files (*)")
@@ -167,35 +141,28 @@ class MainWindow(QMainWindow):
             self.load_video(file_name)
 
     def load_video(self, filename):
-        if self.video_thread is not None:
-            self.video_thread.stop()
-        self.video_thread = VideoThread(filename)
-        self.video_thread.change_pixmap_signal.connect(self.update_video_frame)
-        self.video_thread.start()
-        
-        # Get video duration and set up slider
-        cap = cv2.VideoCapture(filename)
-        self.video_duration = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) / cap.get(cv2.CAP_PROP_FPS))
-        cap.release()
-        
-        self.video_slider.setRange(0, self.video_duration)
-        self.end_time_spin.setRange(0, self.video_duration)
-        self.end_time_spin.setValue(self.video_duration)
-
-    def update_video_frame(self, image):
-        self.video_label.setPixmap(QPixmap.fromImage(image))
+        self.media_player.setMedia(QMediaContent(QUrl.fromLocalFile(filename)))
+        self.play_pause_button.setText("Play")
+        self.video_duration = get_video_duration(filename)
+        self.end_time_spin.setRange(0, int(self.video_duration))
+        self.end_time_spin.setValue(int(self.video_duration))
 
     def play_pause_video(self):
-        if self.timer.isActive():
-            self.timer.stop()
+        if self.media_player.state() == QMediaPlayer.PlayingState:
+            self.media_player.pause()
             self.play_pause_button.setText("Play")
         else:
-            self.timer.start()
+            self.media_player.play()
             self.play_pause_button.setText("Pause")
 
     def set_video_position(self, position):
-        # Implement seeking in the video
-        pass  # This requires more complex implementation with OpenCV
+        self.media_player.setPosition(position)
+
+    def update_duration(self, duration):
+        self.video_slider.setRange(0, duration)
+
+    def update_position(self, position):
+        self.video_slider.setValue(position)
 
     def browse_output_file(self):
         file_name, _ = QFileDialog.getSaveFileName(self, "Save Audio File", "", f"Audio Files (*.{self.format_combo.currentText()});;All Files (*)")
@@ -258,6 +225,5 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Error", message)
 
     def closeEvent(self, event):
-        if self.video_thread is not None:
-            self.video_thread.stop()
+        self.media_player.stop()
         event.accept()
